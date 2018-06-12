@@ -4,7 +4,9 @@
   "main": "rumo-tag-tree.html",
   "dependencies": {
     "polymer": "Polymer/polymer#^2.0.0",
-    "iron-socket-io-client": "Collaborne/iron-socket-io-client#^2.3.0"
+    "iron-socket-io-client": "Collaborne/iron-socket-io-client#^2.3.0",
+    "rumo-tree": "https://github.com/arigo-software/rumo-tree.git",
+    "paper-toggle-button": "^2.1.1"
   },
   "devDependencies": {
     "iron-demo-helpers": "PolymerElements/iron-demo-helpers#^2.0.0",
