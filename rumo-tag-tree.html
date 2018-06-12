@@ -2,43 +2,1257 @@
 
 <link rel="import" href="../iron-socket-io-client/iron-socket-io-client.html">
 
+<link rel="import" href="../paper-toggle-button/paper-toggle-button.html">
+<link rel="import" href="../rumo-tree/rumo-tree.html">
+
 <dom-module id="rumo-tag-tree">
   <template>
-    <style>
+    <style is="custom-style">
+      @keyframes blinker {
+        50% { opacity: 0; }
+      }
+
       :host {
-        display: block;
+        align-items: flex-start;
+        display: flex;
+        flex-direction: column;
+
+        --paper-toggle-button-checked-bar-color:  var(--rumo-accent-bg);
+        --paper-toggle-button-checked-button-color:  var(--rumo-accent-bg);
+        --paper-toggle-button-checked-ink-color: var(--rumo-accent-bg);
+      }
+
+      :host ::content .node-row {
+        align-items: center;
+        display: flex;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+      }
+
+      :host ::content .node-preicon {
+        display: flex;
+        flex: 0 0 20px;
+        justify-content: center;
+        padding-left: 0 !important;
+      }
+
+      :host ::content .node-preicon::before {
+        margin-right: 0 !important;
+      }
+
+      :host ::content .node-icon {
+        color: #424242;
+        flex: 0 0 24px;
+        margin-right: 5px;
+      }
+
+      :host ::content .is-marked > .node-container > .node-row > .node-icon {
+        fill: #e0e0e0;
+        stroke: #424242;
+      }
+
+      :host ::content .is-selected .node-icon {
+        color: #007fff;
+      }
+
+      #toggleName {
+        display: none;
+        margin-bottom: 20px;
+      }
+
+      #tree {
+        --paper-tree-toggle-theme: {
+          animation: blinker 1s linear infinite;
+          content: "⧖";
+        };
       }
     </style>
-    <h2>Hello [[prop1]]!</h2>
     <p>
-      -- {{status}} --
+      Socket: {{status}}
     </p>
+    <paper-toggle-button
+      id="toggleName"
+      on-checked-changed="toggleNameDisplay" checked>
+      GETTEXT(Short Names)
+    </paper-toggle-button>
+    <rumo-tree
+      id="tree"
+      on-select="onSelect"
+      on-toggle="onToggle"
+      data='{ "name": "Loading..." }'></rumo-tree>
   </template>
 
   <script>
-    /**
-     * `rumo-tag-tree`
-     * TAGtree 2.0
-     *
-     * @customElement
-     * @polymer
-     * @demo demo/index.html
-     */
+    // This polyfills add compatibility to all Browsers supporting ES5:
+    if (window.NodeList && !NodeList.prototype.forEach) {
+      NodeList.prototype.forEach = function (callback, thisArg) {
+        thisArg = thisArg || window;
+        for (var i = 0; i < this.length; i++) {
+          callback.call(thisArg, this[i], i, this);
+        }
+      };
+    }
+
     class RumoTagTree extends IronSocketIoClient {
       static get is() { return 'rumo-tag-tree'; }
       static get properties() {
         return {
-          prop1: {
+          context: {
             type: String,
-            value: 'rumo-tag-tree'
+            value: "tagId",
+          },
+          loaded: {
+            type: Array,
+            value: function() { return []; }
+          },
+          // NOTE: The value for path is not correct in the page context, but
+          // because it is so far only used in a polymer component it gets
+          // overwritten and works.
+          // The value is needed for the polymer component in the jQuery stack
+          // where so far only tags are used.
+          path: {
+            type: Object,
+            notify: true,
+            value: function() {
+              return {
+                "data": {
+                  "dpTag": []
+                }
+              };
+            }
+          },
+          rootUrl: {
+            type: String,
+            value: "/~/MessDas/browse/",
+          },
+          rootName: {
+            type: String,
+            value: "TAGs",
+          },
+          showShortname: {
+            type: String,
+            value: "true",
+            observer: "showShortnameChanged"
+          },
+          status: {
+            type: Object,
+            value: function() {
+              return {
+                "active": true,
+                "marked": [],
+                "selected": []
+              };
+            }
+          },
+          treeReady: {
+            notify: true,
+            type: Boolean,
+            value: false
           }
-        };
+        }
+      }
+
+      static get observers() {
+        return [
+          "pathChanged(path.*)"
+        ];
       }
 
       constructor() {
         super();
 
         this.connect('http://localhost:8899/subscribeDelta');
+
+        // this.request('/~/MessDas/browse')
+        //   .then(item => {
+        //     console.log(item);
+        //   });
+      }
+
+      ready() {
+        super.ready();
+
+        const hasPath = !!this.get("path");
+
+        // Setup session storage for click path
+        if (!sessionStorage.getItem("rumoTree")) {
+          sessionStorage.setItem("rumoTree", JSON.stringify({"path": ""}));
+        }
+
+        // Set a flag that the tree is ready
+        this.set("treeReady", true);
+
+        if (hasPath) {
+          const context = this.get("context");
+
+          // Setup the tree
+          this.debounceSetupTree(context);
+        }
+      }
+
+      pathChanged(changeRecord) {
+        const hasPath = !!this.get("path");
+        const isReady = !!this.get("treeReady");
+
+        // Make sure the tree is ready and that there is a path
+        if (hasPath && isReady) {
+          const context = this.get("context");
+
+          // Listen to the correct path change
+          const trigger = context === "tagIdEditor"
+            ? "path.data.dpTag"
+            : "path";
+
+          // Setup the tree accordingly
+          if (changeRecord.path === trigger) {
+            this.debounceSetupTree(context);
+          }
+        }
+      }
+
+      debounceSetupTree(context) {
+        // Set debounce interval according to the context
+        const delay = context === "tagIdEditor" ? 500 : 0;
+
+        // Setup the tree and make sure it get only called once
+        this.debounce = Polymer.Debouncer.debounce(
+          this.debounce,
+          Polymer.Async.timeOut.after(delay),
+          () => this.setupTree(context)
+        );
+      }
+
+      setupTree(context) {
+        // Toggle display of name button
+        this.displayNameToggle(this.$.toggleName, context);
+
+        const $tree = this.$.tree;
+        const $rootNode = $tree.$.root;
+
+        const isRoot = true;
+        const name = this.get("rootName");
+        const url = this.get("rootUrl");
+
+        const isDir = context === "page"
+          ? {
+            dir: true
+            }
+          : {};
+
+        const filePath = context === "page"
+          ? {
+            path: this.get("rootUrl")
+              .replace(/^(\/~\/fs)/, "")
+              .replace(/(\/$)/, ""),
+            shortPath: this.get("rootUrl")
+              .replace(/^(\/~\/fs\/static\/)/, "")
+              .replace(/(\/$)/, "")
+            }
+          : {};
+
+        const path = context === "page"
+          ? "path.data.fs"
+          : "path.data.dpTag";
+
+        const pathData = this.get(path);
+        const hasPathData = !!pathData ? !!pathData.length : false;
+
+        const sessionData = JSON.parse(sessionStorage.getItem("rumoTree")).path;
+        const hasSessionData = !!sessionData;
+
+        const loaded = this.get("loaded");
+        const hasLoaded = !!loaded.length;
+
+        if (hasLoaded) {
+          this.unload(loaded);
+        }
+
+        if (context === "page") {
+          this.setNodeState($rootNode, false, "selected");
+        }
+
+        // Update root node
+        $tree.data = {
+          isRoot,
+          name,
+          url,
+          ...isDir,
+          ...filePath
+        };
+
+        if (hasPathData || hasSessionData) {
+          let active;
+          let data;
+
+          if (hasPathData) {
+            active = true;
+            data = pathData;
+          } else {
+            active = false;
+            data = sessionData
+          }
+
+          this.set("status.active", active);
+          this.setStatus(data, $rootNode, context);
+        } else {
+          // Reset status of selected and marked nodes
+          this.resetStatus();
+
+          // Get root children
+          this.requestChildren($rootNode, context);
+        }
+      }
+
+      async setStatus(paths, $rootNode, context) {
+        let mappedPaths;
+        try {
+          mappedPaths = await Promise.all(
+            paths.map(path => this.mapPath(path, context))
+          );
+        } catch (err) {
+          console.error("Map path: ", err);
+        }
+
+        let selected = [];
+        let marked = [];
+        try {
+          ([selected, marked] = context === "page"
+            ? this.accumulatePathParts(mappedPaths, context)
+            : await this.getIds(this.accumulatePathParts(mappedPaths, context))
+          );
+        } catch (err) {
+          console.error("Accumulate path parts: ", err);
+        }
+
+        // Make sure there are actual datapoints before adding to the
+        // selection array
+        if (this.get("status.active")) {
+          this.set("status.selected", selected.filter(Boolean));
+        }
+
+        this.set("status.marked", marked.filter(Boolean));
+
+        // If there is only a click path add the fake selected one at the end
+        // of the marked array
+        if (!this.get("status.active")) {
+          this.push("status.marked", ...selected.filter(Boolean));
+        }
+
+        // Check if root is selected and mark it selected accordingly
+        this.handleRoot($rootNode, this.status.selected);
+
+        // Request children of root
+        this.requestChildren($rootNode, context);
+      }
+
+      mapPath(path, context) {
+        if (context === "page") {
+          // Remove the /static/projects/ from url
+          // const re = new RegExp(/^\/static\/projects\//, "gi");
+          // Remove the /static/ from url
+          const re = new RegExp(/^\/static\//, "gi");
+          const adjustedPath = path.replace(re, "");
+
+          return Promise.resolve(adjustedPath);
+        }
+
+        let type;
+
+        // If it is an array it has to be a datapoint
+        if (Array.isArray(path)) {
+          type = "datapoint";
+        } else {
+          type = "datapath";
+        }
+
+        if (type === "datapoint") {
+          // Get root url
+          const rootUrl = this.get("rootUrl");
+
+          // Copy the array to not tamper with the orig data
+          const datapoint = [...path];
+
+          // A datapoint is threepart:
+          // 1. tagId
+          // 2. Database
+          // 3. Service (if this part is missing it is localhost)
+
+          // Remove `MESSDAS_UPDATE/live`
+          const tagId = datapoint[0].replace(/(MESSDAS_UPDATE\/live\/)/, "");
+          // Remove `MESSDAS/live`
+          const database = datapoint[1].replace(/(MESSDAS\/live\/)/, "");
+          const service = !!datapoint[2]
+            // Remove `MESSDAS/host`
+            ? datapoint[2].replace(/(service=MESSDAS\/host\/)/, "")
+            : "localhost";
+
+          const nodeget = `${rootUrl}${service}/${database}/?tagId=${tagId}`;
+          const nodeRequest = this.request(nodeget);
+
+          return nodeRequest
+            .then(item => {
+              const adjustedPath = item[tagId].path;
+
+              const tag = `${service}/${database}/${adjustedPath}`;
+
+              return tag;
+            })
+            .catch(error => {
+              console.error("Get datapoint: ", error);
+            })
+        } else {
+          let tag = path;
+
+          if (context === "tagId") {
+            // If it is not a datapoint it has to be a local service. A local
+            // service is starting with `MESSDAS/live` which has to be removed.
+            const adjustedPath = path.replace(/(MESSDAS\/live\/)/, "");
+            // If it is a local service the service name is localhost.
+            const service = "localhost";
+
+            tag = `${service}/${adjustedPath}`;
+          }
+
+          return Promise.resolve(tag);
+        }
+      }
+
+      requestChildren($node, context) {
+        const data = $node.get("data");
+
+        if (this.skipRequestChildren(data, context)) {
+          return;
+        }
+
+        // Set loading styles
+        this.setLoadingState($node, true);
+
+        const isRoot = !!data.isRoot;
+
+        const nodeGet = data.url;
+        const nodeRequest = this.request(nodeGet);
+
+        // Get children
+        nodeRequest
+          .then(children => {
+            const isArray = Array.isArray(children);
+            // page returns an objext and tagId an array
+            const isEmpty = context === "page"
+              ? !Object.keys(children).length
+              : isArray && !children.length;
+            // Problems with tagId return an error object
+            const hasError = isArray && !isEmpty && !!children[0].error;
+
+            if (isEmpty || hasError) {
+              throw "Node is empty or has an error";
+            }
+
+            this.handleChildren($node, children, context);
+
+            // Reset loading styles
+            this.setLoadingState($node, false);
+
+            // Show children of root and marked node directly
+            if (isRoot || data.isMarked) {
+              $node._toggleChildren();
+            }
+          })
+          .catch(error => {
+            console.error("Request children: ", error);
+
+            this.setLoadingState($node, false);
+          });
+      }
+
+      skipRequestChildren(data, context) {
+        const isRoot = !!data.isRoot;
+
+        let skip;
+
+        if (context === "page") {
+          const isDir = !!data.dir
+
+          skip = !isRoot && !isDir;
+        } else {
+          const isDatapoint = data.type === "datapoint";
+          const isTagIdEditor = context === "tagIdEditor";
+          const isLocal = !!data.isLocal;
+
+          skip = (!isRoot && !isTagIdEditor && !isLocal) || isDatapoint;
+        }
+
+        return skip;
+      }
+
+      handleChildren($node, children, context) {
+        const reformattedChildren = context === "page"
+          ? this.reformatPage($node, children)
+          : this.reformatTagId($node, children);
+
+        $node.set("data.children", reformattedChildren);
+      }
+
+      reformatTagId($node, children) {
+        const data = $node.get("data");
+        const baseUrl = data.url;
+
+        const marked = this.get("status.marked");
+        const hasMarked = Array.isArray(marked) && !!marked.length;
+        const selected = this.get("status.selected");
+        const hasSelected = Array.isArray(selected) && !!selected.length;
+
+        let database = data.database || void 0;
+        let service = data.service || void 0;
+
+        let isLocal = data.isLocal || void 0;
+
+        const reformattedChildren = children.map(child => {
+          const type = child.type;
+          const url = `${baseUrl}${encodeURIComponent(child.name)}/`;
+          const pos = child.pos;
+
+          const longname = child.name;
+
+          let tagId = child.tagId;
+
+          let icon;
+          let name = child.name;
+          let shortname = child.name;
+
+          let isMarked = false;
+          let isSelected = false;
+
+          switch (type) {
+            case "service":
+              icon = "cloud";
+              service = child.name;
+              isLocal = child.isLocal;
+              tagId = child.name
+              break;
+            case "database":
+              database = child.name;
+              icon = "reorder";
+              tagId = `${service}-${child.name}`
+              break;
+            case "datapoint":
+              icon = "description";
+              // Convert true or false from String to Boolean and output the
+              // short or long name accordingly.
+              // NOTE: this.showShortname has to be either true or false in
+              // lowercase otherwise an error will get thrown.
+              const showShortname = JSON.parse(this.get("showShortname"));
+              name = showShortname
+                ? child.shortname
+                : child.name;
+              shortname = child.shortname;
+              break;
+            default:
+              icon = "folder";
+          }
+
+          if (hasMarked && marked.find(id => id === tagId)) {
+            isMarked = true;
+          }
+
+          if (hasSelected && selected.find(id => id === tagId)) {
+            isSelected = true;
+          }
+
+          return {
+            database,
+            icon,
+            isLocal,
+            isMarked,
+            isSelected,
+            name,
+            shortname,
+            longname,
+            pos,
+            service,
+            tagId,
+            type,
+            url
+          };
+        });
+
+        // Sort children by position
+        reformattedChildren.sort((a, b) => a.pos - b.pos);
+
+        return reformattedChildren;
+      }
+
+      reformatPage($node, children) {
+        const data = $node.get("data");
+        const baseUrl = data.url;
+
+        const marked = this.get("status.marked");
+        const hasMarked = Array.isArray(marked) && !!marked.length;
+        const selected = this.get("status.selected");
+        const hasSelected = Array.isArray(selected) && !!selected.length;
+
+        const reformattedChildren = [];
+
+        for (const key in children) {
+          if (children.hasOwnProperty(key)) {
+            const child = children[key];
+            const attr = {};
+
+            const isDir = !!child.isDirectory;
+
+            attr.name = key;
+            attr.dir = isDir;
+            attr.url = `${baseUrl}${key}`;
+            attr.path = attr.url.replace(/^(\/~\/fs)/, "");
+            attr.shortPath = attr.path.replace(/^(\/static\/)/, "");
+
+            if (isDir) {
+              attr.url = `${attr.url}/`;
+              attr.icon = "folder";
+            } else {
+              attr.icon = "description";
+            }
+
+            if (hasMarked && marked.find(id => id === attr.shortPath)) {
+              attr.isMarked = true;
+            }
+
+            if (hasSelected && selected.find(id => id === attr.shortPath)) {
+              attr.isSelected = true;
+            }
+
+            reformattedChildren.push(attr);
+          }
+        };
+
+        return reformattedChildren;
+      }
+
+      handleSelection($target) {
+        const $ancestors = this.getAncestors($target.getParent());
+        const context = this.get("context");
+        const data = $target.get("data");
+        const selectedItem = this.getSelectedItem(data, context);
+
+        const path = context === "page"
+          ? "path.data.fs"
+          : "path.data.dpTag";
+
+        if (selectedItem === undefined) {
+          return;
+        }
+
+        if (data.isSelected) {
+          // Deselection is not possible in the editor
+          if (context === "tagIdEditor") {
+            return;
+          }
+
+          this.setNodeState($target, false, "selected");
+
+          const pathData = this.get(path);
+
+          const index = data.type === "datapoint"
+            ? pathData.findIndex(t => this.isEqual(t, selectedItem))
+            : pathData.indexOf(selectedItem);
+
+          const hasIndex = !!~index;
+
+          if (hasIndex) {
+            if (context === "page") {
+              this.setFilePermissions(data, false);
+            }
+
+            this.splice(path, index, 1)
+            this.handleMarking($ancestors, false, context);
+          }
+        } else {
+          // Check if an ancestor is already selected
+          const selectedAncestor = $ancestors.findIndex(
+            ancestor => ancestor.data.isSelected
+          );
+
+          let hasSelectedAncestor = !!~selectedAncestor;
+
+          // There are no selected Ancestors in the editor
+          if (context === "tagIdEditor") {
+            hasSelectedAncestor = false;
+          }
+
+          // If an ancestor is already selected select everything below the
+          // selected ancestor node EXCEPT for the target node otherwise just
+          // select the target node.
+          if (hasSelectedAncestor) {
+            // Remove everything after the selected ancestor
+            const lineage = $ancestors.slice(0, selectedAncestor + 1)
+            // Get selected ancestor
+            const $ancestor = lineage.pop().node;
+            // Collect the remaining ancestor data
+            const lineageData = lineage.map(ancestor => {
+              return context === "page"
+                ? ancestor.data.path
+                : ancestor.data.tagId;
+            });
+            // get the target data
+            const targetData = context === "page"
+              ? data.path
+              : data.tagId;
+
+            // Deselect the selected ancestor
+            this.handleSelection($ancestor);
+
+            // Select every node below the ancestor node except for the target
+            this.selectAncestorNodes($ancestor, lineageData, targetData, context);
+          } else {
+            const deselectChildren = context === "page"
+              ? !!(data.isRoot || data.dir)
+              : !!(data.type === "database" || data.type === "folder");
+
+            if (deselectChildren) {
+              this.setNodeState($target, false, "marked");
+              this.deselectChildren($target);
+            }
+
+            // If in the editor deselect everything beforehand
+            if (context === "tagIdEditor") {
+              this.removeHighlight();
+            }
+
+            this.setNodeState($target, true, "selected");
+
+            if (context === "page") {
+              this.setFilePermissions(data, true);
+            }
+
+            this.push(path, selectedItem);
+            this.handleMarking($ancestors, true, context);
+          }
+        }
+      }
+
+      getSelectedItem(data, context) {
+        let selectedItem;
+
+        if (context === "page") {
+          selectedItem = data.path;
+        } else {
+          const skip = context === "tagIdEditor"
+            // Only datapoints are selectable in the editor
+            ? data.type !== "datapoint"
+            // Prevent selection of undefinded node types
+            : (
+                data.type !== "datapoint" &&
+                data.type !== "database" &&
+                data.type !== "folder"
+              );
+
+          if (skip) {
+            return;
+          }
+
+          const tagAddon = ["MESSDAS", "live"];
+
+          const pathParts = data.url
+            .split("/")
+            .filter(Boolean);
+
+          const service = data.service;
+          const serviceIndex = pathParts.indexOf(service);
+
+          const isLocal = data.isLocal;
+
+          if (data.type === "database" || data.type === "folder") {
+            selectedItem = tagAddon
+              .concat(pathParts.slice(serviceIndex + 1))
+              .join("/");
+          } else {
+            const tagDp = ["MESSDAS_UPDATE", "live"];
+            const tagDb = tagAddon;
+            const db = pathParts.slice(serviceIndex + 1).shift();
+
+            tagDp.push(data.tagId);
+            tagDb.push(db);
+
+            if (context === "tagIdEditor") {
+              const tag = `${tagDp.join("/")}&tag=${tagDb.join("/")}`;
+
+              selectedItem = isLocal
+                ? tag
+                : `${tag}&service=MESSDAS/host/${service}`;
+            } else {
+              selectedItem = [`${tagDp.join("/")}`, `${tagDb.join("/")}`];
+            }
+          }
+        }
+
+        return selectedItem;
+      }
+
+      handleMarking($ancestors, select, context) {
+        $ancestors.forEach(ancestor => {
+          const skip = context === "page"
+            ? false
+            : ancestor.data.type === undefined;
+
+          if (skip) {
+            return;
+          }
+
+          if (select) {
+            this.setNodeState(ancestor.node, true, "marked");
+          } else {
+            const hasChildren = !!~ancestor.data.children.findIndex(
+              child => child.isSelected
+            );
+
+            if (!hasChildren) {
+              this.setNodeState(ancestor.node, false, "marked");
+            }
+          }
+        });
+      }
+
+      selectAncestorNodes($ancestor, lineageData, targetData, context) {
+        // Collect child nodes
+        $ancestor.getChildren().forEach(child => {
+          const data = child.get("data");
+
+          const {isDir, isInLineage, isNotSelectedNode} = context === "page"
+            ? {
+                "isDir": data.dir,
+                "isInLineage": !!~lineageData.indexOf(data.path),
+                "isNotSelectedNode": targetData !== data.path
+              }
+            : {
+                "isDir": data.type === "folder",
+                "isInLineage": !!~lineageData.indexOf(data.tagId),
+                "isNotSelectedNode": targetData !== data.tagId
+              };
+
+          // Collect children of folders if they are part of the lineage
+          if (isDir && isInLineage) {
+            this.selectAncestorNodes(child, lineageData, targetData, context);
+          } else {
+            if (isNotSelectedNode) {
+              this.handleSelection(child);
+            }
+          }
+        });
+      }
+
+      accumulatePathParts(selectedPaths, context) {
+        // Accumulate path parts
+        const markedPaths = selectedPaths.map(path => {
+          const pathSplits = path.split("/").slice(0, -1);
+          const pathParts = [];
+
+          if (!!pathSplits.length) {
+            pathParts.push(pathSplits[0]);
+            pathSplits.reduce((prev, cur) => (
+              pathParts.push(`${prev}/${cur}`), `${prev}/${cur}`
+            ));
+          }
+
+          return pathParts;
+        }).reduce((prev, cur) => prev.concat(cur));
+
+        // Unify paths parts by converting Arrays into Sets
+        const selectedPathsSet = new Set(selectedPaths);
+        const markedPathsSet = new Set(markedPaths);
+
+        // Remove selected path parts from marked set
+        markedPathsSet.forEach(path => {
+          if (selectedPathsSet.has(path)) {
+            markedPathsSet.delete(path);
+          }
+        });
+
+        const selected = [...selectedPathsSet];
+        const marked = [...markedPathsSet];
+
+        return (context === "page")
+          ? [ selected, marked ]
+          : { selected, marked };
+      }
+
+      onToggle(event) {
+        const $target = event.detail;
+        const data = $target.get("data");
+
+        const context = this.get("context");
+
+        this.setLastOpenedNode(data, context);
+
+        if (!$target.loaded) {
+          $target.loaded = true;
+
+          this.push("loaded", $target);
+
+          const active = this.get("status.active");
+
+          Polymer.RenderStatus.afterNextRender(this, () => {
+            $target.getChildren().forEach(child => {
+              const data = child.get("data");
+
+              // Only mark datapoints as selected and marked if there are actual
+              // datapoints and not just a click path
+              if (active) {
+                if (data.isMarked) {
+                  this.setNodeState(child, true, "marked");
+                }
+
+                if (data.isSelected) {
+                  this.setNodeState(child, true, "selected");
+                }
+              }
+
+              this.requestChildren(child, context);
+            });
+          });
+        }
+      }
+
+      setLastOpenedNode(data, context) {
+        const service = data.service;
+        const hasService = !!service;
+
+        // Remember last opened service or folder
+        if (hasService && context === "tagIdEditor") {
+          // Transform:
+          // /~/MessDas/browse/localhost/MESSDAS/
+          // To:
+          // localhost/MESSDAS/
+          const url = data.url;
+          const reg = new RegExp(`\/~\/MessDas\/browse\/`);
+
+          const tag = url.replace(reg, "").replace(/\/$/, "");
+          const hasTag = !!tag;
+
+          const storage = JSON.parse(sessionStorage.getItem("rumoTree"));
+
+          if (hasTag) {
+            storage["path"] = [`${tag}`];
+          }
+
+          // Write current tag into session storage
+          sessionStorage.setItem("rumoTree", JSON.stringify(storage));
+        }
+      }
+
+      onSelect(event) {
+        const $target = event.detail;
+
+        if (!this.get("status.active")) {
+          // Reset status of selected and marked nodes
+          this.resetStatus();
+        }
+
+        this.handleSelection($target);
+      }
+
+      getAncestors($parent, ancestors = []) {
+        return $parent == null
+          ? ancestors
+          : this.getAncestors($parent.getParent(), [
+              ...ancestors, {
+                "node": $parent,
+                "data": $parent.get("data")
+              }
+            ]);
+      }
+
+      setFilePermissions(data, addPermission) {
+        let permissions = this.get("path.allow");
+
+        // Remove leading static from path
+        const regExp = new RegExp(`^\/static`, "g");
+        const path = data.path.replace(regExp, "");
+
+        // Escape path and RegExp ending according to path type
+        const permission = `(^${escape(path)}${data.dir ? "/.*" : "$"})`;
+
+        if (addPermission) {
+          permissions = `${permissions}|${permission}`;
+        } else {
+          const permissionParts = permissions.split("|");
+
+          // Note: Because the | as a separator is a somehow unhappy choice
+          // when working with RegExps the first two array items need to get
+          // joined.
+
+          const brxp = permissionParts.splice(0, 2).join("|");
+          permissionParts.unshift(brxp);
+
+          const index = permissionParts.indexOf(permission);
+
+          if (!!~index) {
+            permissionParts.splice(index, 1);
+            permissions = permissionParts.join("|");
+          }
+        }
+
+        this.set("path.allow", permissions);
+      }
+
+      resetStatus() {
+        this.set("status", function() {
+          return {
+            "active": true,
+            "marked": [],
+            "selected": []
+          };
+        });
+      }
+
+      handleRoot(node, selected) {
+        const data = node.get("data");
+
+        const isSelected = !!~selected.findIndex(
+          node => node === data.shortPath
+        );
+
+        if (isSelected) {
+          this.setNodeState(node, false, "marked");
+          this.setNodeState(node, true, "selected");
+        }
+      }
+
+      setLoadingState($node, enabled) {
+        if (enabled) {
+          $node.updateStyles({"--rumo-tree-toggle-theme": `animation: blinker 1s linear infinite; content: "\u29D6";`});
+        } else {
+          $node.updateStyles({"--rumo-tree-toggle-theme": ";"});
+        }
+      }
+
+      setNodeState($node, status, state) {
+        const statusPart = state.charAt(0).toUpperCase() + state.slice(1);
+
+        status
+          ? $node.classList.add(`is-${state}`)
+          : $node.classList.remove(`is-${state}`);
+
+        $node.set(`data.is${statusPart}`, status);
+
+        $node.updateStyles();
+      }
+
+      getNodeId(path) {
+        const url = this.rootUrl;
+        const nodeGet = url + path;
+        const nodeRequest = this.request(nodeGet);
+
+        return nodeRequest
+          .then(node => {
+            let tagId;
+
+            if (node.type === "service") {
+              tagId = path;
+            } else {
+              if (node.type === "database") {
+                tagId = path.replace(/\//, "-");
+              } else {
+                tagId = node.tagId;
+              }
+            }
+
+            return tagId;
+          })
+          .catch(error => {
+            console.error("Get tagId: ", error);
+          });
+      }
+
+      getIds({selected, marked}) {
+        const selectedIds = Promise.all(
+          selected.map(path => this.getNodeId(path))
+        );
+
+        const markedIds = Promise.all(
+          marked.map(path => this.getNodeId(path))
+        );
+
+        return Promise.all([selectedIds, markedIds])
+          .catch(error => {
+            console.error("Get Ids: ", error);
+          });
+      }
+
+      deselectChildren($target) {
+        // Collect child nodes
+        $target.getChildren().forEach(child => {
+          const data = child.get("data");
+
+          // Deselect node if selected
+          if (data.isSelected) {
+            this.handleSelection(child);
+          }
+
+          // If it is a folder check the children
+          if (data.type === "folder" || data.dir) {
+            this.deselectChildren(child);
+          }
+        });
+      }
+
+      removeHighlight() {
+        const selectedNodes = this.$.tree.querySelectorAll(".is-selected");
+        const markedNodes = this.$.tree.querySelectorAll(".is-marked");
+
+        selectedNodes.forEach(node => {
+          node.classList.remove("is-selected");
+
+          node.set("data.isSelected", false);
+        });
+
+        markedNodes.forEach(node => {
+          node.classList.remove("is-marked");
+
+          node.set("data.isMarked", false);
+        });
+      }
+
+      toggleNameDisplay(evt) {
+        const toggle = evt.detail.value.toString();
+
+        this.set("showShortname", toggle);
+      }
+
+      showShortnameChanged() {
+        const isReady = !!this.get("treeReady");
+        const hasPath = !!this.get("path");
+
+        if (isReady && hasPath) {
+          // Get all paper-tree nodes
+          const nodes = [...this.$.tree.querySelectorAll("paper-tree-node")];
+          // Filter out datapoint nodes
+          const dps = nodes.filter(node => node.data.type === "datapoint");
+          // Convert true or false from String to Boolean and output the
+          // short or long name accordingly.
+          // NOTE: this.showShortname has to be either true or false in
+          // lowercase otherwise an error will get thrown.
+          const showShortname = JSON.parse(this.get("showShortname"));
+
+          dps.forEach(dp => {
+            name = showShortname
+              ? dp.data.shortname
+              : dp.data.longname;
+
+            // Set node name
+            dp.data.name = name;
+
+            // Set text content of node
+            const nodeName = dp.querySelector(".node-name");
+            nodeName.textContent = name;
+          });
+        }
+      }
+
+      displayNameToggle($element, context) {
+        context === "page"
+          ? $element.style.display = "none"
+          : $element.style.display = "block";
+      }
+
+      unload(nodes) {
+        nodes.forEach(node => node.loaded = false);
+        this.set("loaded", []);
+      }
+
+      isEqual(value, other) {
+        var type = Object.prototype.toString.call(value);
+
+        if (type !== Object.prototype.toString.call(other)) {
+          return false;
+        }
+
+        if (["[object Array]", "[object Object]"].indexOf(type) < 0) {
+          return false;
+        }
+
+        var valueLen = type === "[object Array]"
+          ? value.length
+          : Object.keys(value).length;
+
+        var otherLen = type === "[object Array]"
+          ? other.length
+          : Object.keys(other).length;
+
+        if (valueLen !== otherLen) {
+          return false;
+        }
+
+        var compare = function(item1, item2) {
+          var itemType = Object.prototype.toString.call(item1);
+
+          if (["[object Array]", "[object Object]"].indexOf(itemType) >= 0) {
+            if (!isEqual(item1, item2)) {
+              return false;
+            }
+          } else {
+            if (itemType !== Object.prototype.toString.call(item2)) {
+              return false;
+            }
+
+            if (itemType === "[object Function]") {
+              if (item1.toString() !== item2.toString()) {
+                return false;
+              }
+            } else {
+              if (item1 !== item2) {
+                return false;
+              }
+            }
+          }
+        };
+
+        if (type === "[object Array]") {
+          for (var i = 0; i < valueLen; i++) {
+            if (compare(value[i], other[i]) === false) {
+              return false;
+            }
+          }
+        } else {
+          for (var key in value) {
+            if (value.hasOwnProperty(key)) {
+              if (compare(value[key], other[key]) === false) {
+                return false;
+              }
+            }
+          }
+        }
+
+        return true;
+      }
+
+      request(url) {
+        const request = JSON.stringify({
+          url,
+          method: 'GET',
+          locale: 'de',
+        });
+
+        return new Promise((resolve, reject) => {
+          this._socket.emit('HTTP', request, response => {
+            let body;
+            let status;
+
+            try {
+              ({ status, body } = JSON.parse(response));
+
+              if (status !== 200) {
+                throw `Error getting data. Response ${status}: ${body}`;
+              }
+            } catch (error) {
+              reject(error);
+            }
+
+            if (status === 200) {
+              const data = JSON.parse(body);
+
+              resolve(data);
+            }
+          });
+        });
       }
     }
 
