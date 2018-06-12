@@ -1,5 +1,7 @@
 <link rel="import" href="../polymer/polymer-element.html">
 
+<link rel="import" href="../iron-socket-io-client/iron-socket-io-client.html">
+
 <dom-module id="rumo-tag-tree">
   <template>
     <style>
@@ -8,6 +10,9 @@
       }
     </style>
     <h2>Hello [[prop1]]!</h2>
+    <p>
+      -- {{status}} --
+    </p>
   </template>
 
   <script>
@@ -19,7 +24,7 @@
      * @polymer
      * @demo demo/index.html
      */
-    class RumoTagTree extends Polymer.Element {
+    class RumoTagTree extends IronSocketIoClient {
       static get is() { return 'rumo-tag-tree'; }
       static get properties() {
         return {
@@ -28,6 +33,12 @@
             value: 'rumo-tag-tree'
           }
         };
+      }
+
+      constructor() {
+        super();
+
+        this.connect('http://localhost:8899/subscribeDelta');
       }
     }
 

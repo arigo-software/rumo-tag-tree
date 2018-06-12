@@ -3,7 +3,8 @@
   "description": "TAGtree 2.0",
   "main": "rumo-tag-tree.html",
   "dependencies": {
-    "polymer": "Polymer/polymer#^2.0.0"
+    "polymer": "Polymer/polymer#^2.0.0",
+    "iron-socket-io-client": "Collaborne/iron-socket-io-client#^2.3.0"
   },
   "devDependencies": {
     "iron-demo-helpers": "PolymerElements/iron-demo-helpers#^2.0.0",
