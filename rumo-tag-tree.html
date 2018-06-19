@@ -1122,14 +1122,25 @@
         const hasPath = !!this.get("path");
 
         if (isReady && hasPath) {
-          // Get all paper-tree nodes
-          const nodes = [...this.$.tree.querySelectorAll("paper-tree-node")];
-          // Filter out datapoint nodes
-          const dps = nodes.filter(node => node.data.type === "datapoint");
-          // Convert true or false from String to Boolean and output the
-          // short or long name accordingly.
-          // NOTE: this.showShortname has to be either true or false in
-          // lowercase otherwise an error will get thrown.
+          const tree = this.shadowRoot.querySelector("rumo-tree#tree");
+          const root = tree.shadowRoot.querySelector("rumo-tree-item#root");
+
+          const dps = [];
+
+          const getDps = (node) => {
+            const nodes = node.shadowRoot.querySelectorAll("rumo-tree-item");
+
+            nodes.forEach(node => {
+              if (node.data.type === "datapoint") {
+                dps.push(node);
+              } else {
+                getDps(node);
+              }
+            });
+          };
+
+          getDps(root);
+
           const showShortname = JSON.parse(this.get("showShortname"));
 
           dps.forEach(dp => {
@@ -1141,7 +1152,7 @@
             dp.data.name = name;
 
             // Set text content of node
-            const nodeName = dp.querySelector(".node-name");
+            const nodeName = dp.shadowRoot.querySelector(".node__name");
             nodeName.textContent = name;
           });
         }
