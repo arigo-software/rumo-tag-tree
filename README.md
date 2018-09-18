@@ -1,3 +1,6 @@
+DEPRECATED  
+This tree is a quick and dirty adaption of the [paper-tree](https://github.com/vpusher/paper-tree) component to work with Polymer 2. It will not get any further development and is not properly tested. Use it on your own risk.
+
 # \<rumo-tag-tree\>
 
 TAGtree 2.0
